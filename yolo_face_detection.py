@@ -1,3 +1,27 @@
+"""
+YOLOv11人脸检测与表情识别示例代码
+- 使用YOLOv11模型进行人脸检测
+- 使用训练好的表情识别模型进行表情分类
+- 支持摄像头实时检测、图片检测和视频文件检测
+- 自动调整文本位置以避免边缘遮挡
+- 需要安装 ultralytics、opencv-python、Pillow 等依赖库
+使用方法:
+1. 摄像头实时检测:
+python yolo_face_detection.py
+2. 图片检测:
+python yolo_face_detection.py --input path/to/image.jpg
+3. 视频文件检测:
+python yolo_face_detection.py --input path/to/video.mp4
+4. 显示窗口:
+python yolo_face_detection.py --input path/to/image.jpg --show
+注意事项:
+- 确保已训练好表情识别模型并将路径正确设置在 emotion_model_path 变量中
+- 确保已下载 YOLOv11 人脸检测模型并将路径正确设置在 download_face_model 函数中
+- 在某些环境中可能无法显示 OpenCV 窗口，使用 --show 参数时会尝试显示窗口，如果失败会自动跳过显示并继续处理
+- 处理视频文件时会将结果保存为新的视频文件，文件名以 yolo_result_ 开头，保存在 results 目录下
+"""
+
+
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -6,42 +30,108 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import argparse
 import torch
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_FONT_DIR = PROJECT_ROOT / "fonts"
+SYSTEM_FONT_CANDIDATES = [
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/ukai.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/uming.ttc"),
+    Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+    Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+    Path("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/google-noto-cjk/NotoSerifCJK-Regular.ttc"),
+]
+PROJECT_FONT_PATTERNS = (
+    "*NotoSansSC*.otf",
+    "*NotoSansSC*.ttf",
+    "*NotoSansCJK*.ttc",
+    "*SourceHanSans*.otf",
+    "*SourceHanSans*.ttf",
+    "*wqy*.ttf",
+    "*wqy*.ttc",
+    "*.ttf",
+    "*.ttc",
+    "*.otf",
+)
 
 
 def download_face_model():
-    """下载YOLOv11人脸检测模型"""
-    model_path = "yolov11n-face.pt"
+    """返回人脸检测模型路径。"""
+    env_path = os.environ.get("FACE_MODEL_PATH")
+    if env_path:
+        return env_path
+    return "yolov12l-face.pt"
 
-    return model_path
 
-
-def load_font():
-    """加载中文字体"""
-    # 设置中文字体
-    font_path = None
-    if os.path.exists("C:/Windows/Fonts/simhei.ttf"):
-        font_path = "C:/Windows/Fonts/simhei.ttf"
-    elif os.path.exists("C:/Windows/Fonts/simsun.ttc"):
-        font_path = "C:/Windows/Fonts/simsun.ttc"
-    elif os.path.exists("C:/Windows/Fonts/msyh.ttc"):
-        font_path = "C:/Windows/Fonts/msyh.ttc"
-
-    # 如果找不到系统字体，尝试使用fonts目录下的字体
-    if font_path is None:
-        os.makedirs("fonts", exist_ok=True)
-        font_path = "fonts/font.ttf"
-        if not os.path.exists(font_path):
-            print(f"未找到字体文件: {font_path}")
-            print("将使用默认字体，中文可能显示为乱码")
-
-    # 创建字体对象
+def is_lfs_pointer_file(file_path):
+    """判断文件是否为 Git LFS 占位文件。"""
     try:
-        font_size = 24
-        font = ImageFont.truetype(font_path, font_size)
+        with open(file_path, "r", encoding="utf-8") as f:
+            header = f.read(128)
+        return header.startswith("version https://git-lfs.github.com/spec/v1")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def load_emotion_model():
+    """加载表情识别模型，自动跳过 LFS 占位文件。"""
+    candidates = [
+        "best_yolo26x_cls.pt",
+    ]
+
+    for model_path in candidates:
+        if not os.path.exists(model_path):
+            continue
+        if is_lfs_pointer_file(model_path):
+            print(f"警告：模型文件是 Git LFS 占位文件，跳过: {model_path}")
+            continue
+        try:
+            print(f"加载表情识别模型: {model_path}")
+            return YOLO(model_path)
+        except Exception as e:
+            print(f"警告：加载表情识别模型失败 {model_path}: {e}")
+
+    print("警告：未找到可用的表情识别模型，将仅进行人脸检测")
+    return None
+
+
+def find_chinese_font_path():
+    """查找可用的中文字体文件路径。"""
+    windows_candidates = [
+        Path("C:/Windows/Fonts/simhei.ttf"),
+        Path("C:/Windows/Fonts/simsun.ttc"),
+        Path("C:/Windows/Fonts/msyh.ttc"),
+    ]
+    for candidate in windows_candidates + SYSTEM_FONT_CANDIDATES:
+        if candidate.exists():
+            return str(candidate)
+
+    PROJECT_FONT_DIR.mkdir(exist_ok=True)
+    for pattern in PROJECT_FONT_PATTERNS:
+        matches = sorted(PROJECT_FONT_DIR.rglob(pattern))
+        if matches:
+            return str(matches[0])
+
+    return None
+
+
+def load_font(size=24):
+    """加载中文字体。"""
+    font_path = find_chinese_font_path()
+    try:
+        if font_path is None:
+            raise FileNotFoundError("未找到可用的中文字体文件")
+        font = ImageFont.truetype(font_path, size)
         print(f"已加载字体: {font_path}")
         return font
     except Exception as e:
         print(f"加载字体失败: {e}")
+        print("将使用默认字体，中文可能显示为方框或乱码")
         return ImageFont.load_default()
 
 
@@ -107,23 +197,50 @@ def cv2_add_chinese_text(img, text, position, text_color=(0, 255, 0), font=None,
         cv2.putText(img, text, (x_pos, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.9, text_color, 2)
         return img
 
-def detect_faces_video():
+
+def translate_emotion_label(label):
+    """将模型类别名转换为中文显示。"""
+    mapping = {
+        "angry": "愤怒",
+        "anger": "愤怒",
+        "disgust": "厌恶",
+        "fear": "恐惧",
+        "happy": "高兴",
+        "sad": "悲伤",
+        "surprise": "惊讶",
+        "neutral": "中性",
+    }
+    return mapping.get(str(label).lower(), str(label))
+
+
+def get_top1_emotion(result):
+    """从分类结果中提取 top1 类别及置信度。"""
+    probs = result.probs
+    class_id = int(probs.top1)
+    confidence = float(probs.top1conf)
+    emotion_name = result.names[class_id]
+    emotion_label = translate_emotion_label(emotion_name)
+    return emotion_name, emotion_label, confidence
+
+
+def show_frame(window_name, frame, wait_key=1):
+    """尝试显示窗口，失败时返回 False。"""
+    try:
+        cv2.imshow(window_name, frame)
+        return (cv2.waitKey(wait_key) & 0xFF) != ord('q')
+    except cv2.error as e:
+        print(f"当前 OpenCV 环境不支持窗口显示，已跳过 imshow: {e}")
+        return False
+
+
+def detect_faces_video(show_window=True):
     """使用YOLOv11人脸检测模型进行视频人脸检测（摄像头）"""
     # 下载并加载YOLOv11人脸检测模型
     face_model_path = download_face_model()
     face_model = YOLO(face_model_path)  # 使用专门的人脸检测模型
 
     # 加载表情识别模型
-    emotion_model_path = 'runs/classify/fer2013_plus_optimized/weights/best.pt'
-    if not os.path.exists(emotion_model_path):
-        print(f"警告：表情识别模型文件不存在: {emotion_model_path}")
-        print("将仅进行人脸检测，不进行表情识别")
-        emotion_model = None
-    else:
-        emotion_model = YOLO(emotion_model_path)
-
-    # 表情标签
-    emotion_labels = ['愤怒', '厌恶', '高兴', '中性', '悲伤', '惊讶']
+    emotion_model = load_emotion_model()
 
     # 加载字体
     font = load_font()
@@ -185,15 +302,8 @@ def detect_faces_video():
                     face_roi_gray_3ch = cv2.cvtColor(face_roi_gray, cv2.COLOR_GRAY2BGR)
 
                     # 使用YOLO模型进行表情识别
-                    emotion_results = emotion_model(face_roi_gray_3ch)
-
-                    # 获取预测结果
-                    probs = emotion_results[0].probs.data.tolist()
-                    class_id = probs.index(max(probs))
-                    confidence = max(probs)
-
-                    # 获取表情标签
-                    emotion = emotion_labels[class_id]
+                    emotion_results = emotion_model(face_roi_gray_3ch, verbose=False)
+                    emotion_name, emotion, confidence = get_top1_emotion(emotion_results[0])
 
                     # 在图像上显示预测结果
                     text = f"{emotion}: {confidence:.2f}"
@@ -206,39 +316,29 @@ def detect_faces_video():
 
                     # 使用自定义函数添加中文文本
                     frame = cv2_add_chinese_text(frame, text, text_position, (36, 255, 12), font, adjust_position=True)
+                    print(f"检测结果: {emotion} / {emotion_name} ({confidence:.2f})")
                 except Exception as e:
                     print(f"处理人脸时出错: {e}")
 
         # 显示结果
-        cv2.imshow("YOLO人脸检测与表情识别", frame)
-
-        # 检查是否按下 'q' 键退出
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if show_window and not show_frame("YOLO人脸检测与表情识别", frame, wait_key=1):
             break
 
     # 释放资源
     cap.release()
-    cv2.destroyAllWindows()
+    if show_window:
+        cv2.destroyAllWindows()
 
 
-def detect_faces_image(image_path):
+def detect_faces_image(image_path, show_window=False):
     """使用YOLOv11人脸检测模型进行图片人脸检测"""
     # 下载并加载YOLOv11人脸检测模型
     face_model_path = download_face_model()
     face_model = YOLO(face_model_path)  # 使用专门的人脸检测模型
 
     # 加载表情识别模型
-    emotion_model_path = 'runs/classify/fer2013_plus_optimized/weights/best.pt'
-    if not os.path.exists(emotion_model_path):
-        print(f"警告：表情识别模型文件不存在: {emotion_model_path}")
-        print("将仅进行人脸检测，不进行表情识别")
-        emotion_model = None
-    else:
-        emotion_model = YOLO(emotion_model_path)
+    emotion_model = load_emotion_model()
 
-    # 表情标签
-    emotion_labels = ['愤怒', '厌恶', '高兴', '中性', '悲伤', '惊讶']
-    # {0: 'anger', 1: 'disgust', 2: 'happy', 3: 'neutral', 4: 'sad', 5: 'surprise'}
     # 加载字体
     font = load_font()
 
@@ -298,15 +398,8 @@ def detect_faces_image(image_path):
                 face_roi_gray_3ch = cv2.cvtColor(face_roi_gray, cv2.COLOR_GRAY2BGR)
 
                 # 使用YOLO模型进行表情识别
-                emotion_results = emotion_model(face_roi_gray_3ch)
-
-                # 获取预测结果
-                probs = emotion_results[0].probs.data.tolist()
-                class_id = probs.index(max(probs))
-                confidence = max(probs)
-
-                # 获取表情标签
-                emotion = emotion_labels[class_id]
+                emotion_results = emotion_model(face_roi_gray_3ch, verbose=False)
+                emotion_name, emotion, confidence = get_top1_emotion(emotion_results[0])
 
                 # 在图像上显示预测结果
                 text = f"人脸 {j + 1}: {emotion} ({confidence:.2f})"
@@ -318,14 +411,9 @@ def detect_faces_image(image_path):
                     text_position = (x1_expanded, y2_expanded + 30)
 
                 image = cv2_add_chinese_text(image, text, text_position, (36, 255, 12), font, adjust_position=True)
-                print(f"人脸 {j + 1}: {emotion} (置信度: {confidence:.2f})")
+                print(f"人脸 {j + 1}: {emotion} / {emotion_name} (置信度: {confidence:.2f})")
             except Exception as e:
                 print(f"处理人脸 {j + 1} 时出错: {e}")
-
-    # 显示结果
-    cv2.imshow("YOLO人脸检测与表情识别结果", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
     # 保存结果
     output_dir = "results"
@@ -337,24 +425,19 @@ def detect_faces_image(image_path):
     cv2.imwrite(output_path, image)
     print(f"结果已保存至: {output_path}")
 
+    if show_window:
+        show_frame("YOLO人脸检测与表情识别结果", image, wait_key=0)
+        cv2.destroyAllWindows()
 
-def detect_faces_video_file(video_path):
+
+def detect_faces_video_file(video_path, show_window=True):
     """使用YOLOv11人脸检测模型进行视频文件人脸检测"""
     # 下载并加载YOLOv11人脸检测模型
     face_model_path = download_face_model()
     face_model = YOLO(face_model_path)  # 使用专门的人脸检测模型
 
     # 加载表情识别模型
-    emotion_model_path = 'runs/classify/fer2013_plus_optimized/weights/best.pt'
-    if not os.path.exists(emotion_model_path):
-        print(f"警告：表情识别模型文件不存在: {emotion_model_path}")
-        print("将仅进行人脸检测，不进行表情识别")
-        emotion_model = None
-    else:
-        emotion_model = YOLO(emotion_model_path)
-
-    # 表情标签
-    emotion_labels = ['愤怒', '厌恶', '高兴', '中性', '悲伤', '惊讶']
+    emotion_model = load_emotion_model()
 
     # 加载字体
     font = load_font()
@@ -443,15 +526,8 @@ def detect_faces_video_file(video_path):
                     face_roi_gray_3ch = cv2.cvtColor(face_roi_gray, cv2.COLOR_GRAY2BGR)
 
                     # 使用YOLO模型进行表情识别
-                    emotion_results = emotion_model(face_roi_gray_3ch)
-
-                    # 获取预测结果
-                    probs = emotion_results[0].probs.data.tolist()
-                    class_id = probs.index(max(probs))
-                    confidence = max(probs)
-
-                    # 获取表情标签
-                    emotion = emotion_labels[class_id]
+                    emotion_results = emotion_model(face_roi_gray_3ch, verbose=False)
+                    emotion_name, emotion, confidence = get_top1_emotion(emotion_results[0])
 
                     # 在图像上显示预测结果
                     text = f"{emotion}: {confidence:.2f}"
@@ -464,6 +540,7 @@ def detect_faces_video_file(video_path):
 
                     # 使用自定义函数添加中文文本
                     frame = cv2_add_chinese_text(frame, text, text_position, (36, 255, 12), font, adjust_position=True)
+                    print(f"检测结果: {emotion} / {emotion_name} ({confidence:.2f})")
                 except Exception as e:
                     print(f"处理人脸时出错: {e}")
 
@@ -475,30 +552,33 @@ def detect_faces_video_file(video_path):
         out.write(frame)
 
         # 显示结果
-        cv2.imshow("YOLO人脸检测与表情识别", frame)
-
-        # 检查是否按下 'q' 键退出
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if show_window and not show_frame("YOLO人脸检测与表情识别", frame, wait_key=1):
             break
 
     # 释放资源
     cap.release()
     out.release()
-    cv2.destroyAllWindows()
+    if show_window:
+        cv2.destroyAllWindows()
 
     print(f"处理完成，结果已保存至: {output_path}")
 
 
 def main():
     """主函数，根据输入类型选择相应的处理方式"""
+    parser = argparse.ArgumentParser(description="YOLO 人脸检测与表情识别")
+    parser.add_argument("--input", "-i", dest="input_path", default=None, help="图片或视频路径；留空则使用摄像头")
+    parser.add_argument("--show", action="store_true", help="尝试显示 OpenCV 窗口")
+    args = parser.parse_args()
+
     # 获取用户输入
-    input_path = input("请输入图片/视频文件路径（直接回车使用摄像头）：").strip()
+    input_path = args.input_path.strip() if args.input_path else input("请输入图片/视频文件路径（直接回车使用摄像头）：").strip()
 
     # 根据输入类型选择相应的处理方式
     if not input_path:
         # 没有提供输入路径，使用摄像头
         print("启动视频流人脸检测模式...")
-        detect_faces_video()
+        detect_faces_video(show_window=args.show)
     else:
         # 检查文件是否存在
         if not os.path.exists(input_path):
@@ -511,11 +591,11 @@ def main():
         if ext in ['.jpg', '.jpeg', '.png']:
             # 图片处理
             print(f"正在处理图片: {input_path}")
-            detect_faces_image(input_path)
+            detect_faces_image(input_path, show_window=args.show)
         elif ext in ['.mp4', '.avi', '.mov', '.mkv']:
             # 视频处理
             print(f"正在处理视频: {input_path}")
-            detect_faces_video_file(input_path)
+            detect_faces_video_file(input_path, show_window=args.show)
         else:
             print(f"不支持的文件类型: {ext}")
             print("支持的文件类型: .jpg, .jpeg, .png, .mp4, .avi, .mov, .mkv")
@@ -523,4 +603,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

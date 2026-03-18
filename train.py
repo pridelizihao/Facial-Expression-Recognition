@@ -2,7 +2,7 @@ from ultralytics import YOLO
 import time
 
 # 加载模型
-model = YOLO("yolo11n-cls.yaml")  # 从YAML构建新模型
+model = YOLO("yolo11n-cls.pt")  # 从YAML构建新模型
 # model = YOLO("yolo11l-cls.pt")
 
 results = model.train(
@@ -10,11 +10,11 @@ results = model.train(
     # affectnet
     # my_yolo_emotion_dataset
     # yolo_emotion_dataset_plus
-    data="fer2013plus",
+    data="datasets/archive",
     epochs=200,
-    batch=256,
+    batch=64,
     imgsz=224,
-    workers=6,
+    workers=2,
 
     # 优化器设置
     optimizer="AdamW",  # 使用具有自适应动量的现代优化器
@@ -37,6 +37,6 @@ results = model.train(
 
     # 项目设置
     project="runs/classify",
-    name="fer2013_plus_optimized",
+    name="archive",
     exist_ok=True,
 )
