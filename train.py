@@ -90,7 +90,7 @@ results = model.train(
     epochs=200,
     batch=128,
     imgsz=224,
-    workers=6,
+    workers=2,
 
     # 优化器设置
     optimizer="AdamW",

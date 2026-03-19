@@ -174,3 +174,12 @@ pnnx*
 
 # calibration image
 calibration_*.npy
+
+*.pt
+
+#pt权重文件
+*.pt
+
+pic/*
+
+results/*

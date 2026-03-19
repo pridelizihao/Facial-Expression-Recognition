@@ -1,3 +1,11 @@
+"""
+图片人脸表情识别
+使用训练好的YOLO模型识别图片中的人脸表情，并在图像上
+显示识别结果。该脚本还会保存带有识别结果的图像到results目录下。
+使用方法:
+python image_emotion_recognition.py path/to/image.jpg
+"""
+
 import cv2
 import numpy as np
 import argparse
@@ -6,7 +14,37 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 
-def recognize_emotion(image_path):
+def find_font_path():
+    """优先查找可用中文字体。"""
+    candidates = [
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+        "fonts/NotoSansSC-Regular.otf",
+        "fonts/font.ttf",
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def translate_emotion_label(label):
+    """将模型类别名转换为中文显示。"""
+    mapping = {
+        "angry": "生气",
+        "disgust": "厌恶",
+        "fear": "恐惧",
+        "happy": "高兴",
+        "sad": "悲伤",
+        "surprise": "惊讶",
+        "neutral": "中性",
+    }
+    return mapping.get(str(label).lower(), str(label))
+
+
+def recognize_emotion(image_path, show_result=False):
     """
     识别图片中的人脸表情
 
@@ -14,11 +52,8 @@ def recognize_emotion(image_path):
         image_path: 图片路径
     """
     # 加载训练好的模型
-    model_path = 'runs/classify/train/weights/best.pt'
+    model_path = 'best_yolo26x_cls.pt'  # 替换为你的模型路径
     model = YOLO(model_path)
-
-    # 表情标签（根据fer2013plus数据集）
-    emotion_labels = ['生气', '厌恶', '恐惧', '高兴', '悲伤', '惊讶', '中性']
 
     # 加载人脸检测器
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -30,22 +65,9 @@ def recognize_emotion(image_path):
         return
 
     # 设置中文字体
-    # 首先尝试使用系统字体
-    font_path = None
-    if os.path.exists("C:/Windows/Fonts/simhei.ttf"):
-        font_path = "C:/Windows/Fonts/simhei.ttf"
-    elif os.path.exists("C:/Windows/Fonts/simsun.ttc"):
-        font_path = "C:/Windows/Fonts/simsun.ttc"
-    elif os.path.exists("C:/Windows/Fonts/msyh.ttc"):
-        font_path = "C:/Windows/Fonts/msyh.ttc"
-
-    # 如果找不到系统字体，尝试使用fonts目录下的字体
+    font_path = find_font_path()
     if font_path is None:
-        os.makedirs("fonts", exist_ok=True)
-        font_path = "fonts/font.ttf"
-        if not os.path.exists(font_path):
-            print(f"未找到字体文件: {font_path}")
-            print("将使用默认字体，中文可能显示为乱码")
+        print("未找到可用中文字体，将使用默认字体，中文可能显示为乱码")
 
     # 创建字体对象
     try:
@@ -103,28 +125,24 @@ def recognize_emotion(image_path):
             face_roi_gray_3ch = cv2.cvtColor(face_roi_gray, cv2.COLOR_GRAY2BGR)
 
             # 使用YOLO模型进行表情识别
-            results = model(face_roi_gray_3ch)
+            results = model(face_roi_gray_3ch, verbose=False)
 
             # 获取预测结果
-            probs = results[0].probs.data.tolist()
-            class_id = probs.index(max(probs))
-            confidence = max(probs)
+            probs = results[0].probs
+            class_id = int(probs.top1)
+            confidence = float(probs.top1conf)
 
-            # 获取表情标签
-            emotion = emotion_labels[class_id]
+            # 获取模型真实类别名，再转换为中文显示
+            emotion_name = results[0].names[class_id]
+            emotion = translate_emotion_label(emotion_name)
 
             # 在图像上显示预测结果
             text = f"人脸 {i + 1}: {emotion} ({confidence:.2f})"
             image = cv2_add_chinese_text(image, text, (x, y - 30), (36, 255, 12))
 
-            print(f"人脸 {i + 1}: {emotion} (置信度: {confidence:.2f})")
+            print(f"人脸 {i + 1}: {emotion} / {emotion_name} (置信度: {confidence:.2f})")
         except Exception as e:
             print(f"处理人脸 {i + 1} 时出错: {e}")
-
-    # 显示结果
-    cv2.imshow("表情识别结果", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
     # 保存结果
     output_dir = "results"
@@ -136,10 +154,19 @@ def recognize_emotion(image_path):
     cv2.imwrite(output_path, image)
     print(f"结果已保存至: {output_path}")
 
+    if show_result:
+        try:
+            cv2.imshow("表情识别结果", image)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        except cv2.error as e:
+            print(f"当前 OpenCV 环境不支持弹窗显示，已跳过 imshow: {e}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="图片人脸表情识别")
     parser.add_argument("image_path", help="图片路径")
+    parser.add_argument("--show", action="store_true", help="尝试弹窗显示结果")
     args = parser.parse_args()
 
-    recognize_emotion(args.image_path)
+    recognize_emotion(args.image_path, show_result=args.show)
