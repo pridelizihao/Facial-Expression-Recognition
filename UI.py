@@ -7,13 +7,53 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QLabel, QVBoxLayout, QHBoxLayout,
                              QWidget, QFileDialog, QComboBox, QSlider, QStyle, QStyleFactory,
                              QFrame, QSplitter, QGroupBox, QGridLayout, QMessageBox, QProgressBar)
-from PyQt5.QtGui import QPixmap, QImage, QFont, QPalette, QColor, QIcon
+from PyQt5.QtGui import QPixmap, QImage, QFont, QPalette, QColor, QIcon, QFontDatabase
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 import qdarkstyle
 from ultralytics import YOLO
 
 # 导入原有的人脸检测函数
-from yolo_face_detection import download_face_model, load_font, cv2_add_chinese_text
+from yolo_face_detection import download_face_model, load_font, cv2_add_chinese_text, find_chinese_font_path
+
+
+def is_lfs_pointer_file(file_path):
+    """判断文件是否为 Git LFS 指针文件。"""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            header = f.read(128)
+        return header.startswith("version https://git-lfs.github.com/spec/v1")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def configure_application_font(app):
+    """为 Qt 应用配置中文字体，避免 Linux 下出现方框。"""
+    font_path = find_chinese_font_path()
+    preferred_families = [
+        "Noto Sans SC",
+        "Noto Sans CJK SC",
+        "Source Han Sans SC",
+        "Microsoft YaHei",
+        "SimHei",
+        "WenQuanYi Zen Hei",
+        "PingFang SC",
+    ]
+
+    family = None
+    if font_path:
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id != -1:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                family = families[0]
+
+    app_font = QFont()
+    if family:
+        app_font.setFamily(family)
+    else:
+        app_font.setFamilies(preferred_families)
+    app_font.setPointSize(11)
+    app.setFont(app_font)
 
 
 class VideoThread(QThread):
@@ -575,6 +615,13 @@ class FaceDetectionApp(QMainWindow):
         try:
             # 下载并加载人脸检测模型
             face_model_path = download_face_model()
+            if not os.path.exists(face_model_path):
+                raise FileNotFoundError(f"人脸检测模型文件不存在: {face_model_path}")
+            if is_lfs_pointer_file(face_model_path):
+                raise RuntimeError(
+                    f"人脸检测模型还是 Git LFS 占位文件: {face_model_path}\n"
+                    "请先拉取真实权重文件后再运行。"
+                )
             self.face_model = YOLO(face_model_path)
 
             # 加载表情识别模型
@@ -585,6 +632,9 @@ class FaceDetectionApp(QMainWindow):
             for model_name, model_path in self.model_paths.items():
                 if os.path.exists(model_path):
                     try:
+                        if is_lfs_pointer_file(model_path):
+                            print(f"模型 {model_name} 仍是 Git LFS 占位文件: {model_path}")
+                            continue
                         self.emotion_models[model_name] = YOLO(model_path)
                         model_loaded = True
                     except Exception as e:
@@ -602,7 +652,12 @@ class FaceDetectionApp(QMainWindow):
                     self.model_combo.setCurrentText(first_available)
             else:
                 self.emotion_model = None
-                QMessageBox.warning(self, "警告", "未找到任何表情识别模型，将只进行人脸检测")
+                QMessageBox.warning(
+                    self,
+                    "警告",
+                    "未找到任何可用的表情识别模型。\n"
+                    "如果文件存在但仍无法加载，很可能当前仓库里的 .pt 还是 Git LFS 占位文件。",
+                )
         except Exception as e:
             QMessageBox.critical(self, "错误", f"加载模型失败: {str(e)}")
             self.face_model = None
@@ -625,6 +680,13 @@ class FaceDetectionApp(QMainWindow):
         model_path = self.model_paths.get(model_name)
         if model_path and os.path.exists(model_path):
             try:
+                if is_lfs_pointer_file(model_path):
+                    QMessageBox.warning(
+                        self,
+                        "警告",
+                        f"模型文件仍是 Git LFS 占位文件，无法加载：\n{model_path}",
+                    )
+                    return
                 self.emotion_models[model_name] = YOLO(model_path)
                 self.emotion_model = self.emotion_models[model_name]
                 # 如果视频线程正在运行，更新其模型
@@ -807,6 +869,7 @@ class FaceDetectionApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    configure_application_font(app)
 
     # 设置应用样式
     app.setStyle(QStyleFactory.create("Fusion"))

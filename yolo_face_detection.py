@@ -6,6 +6,34 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import argparse
 import torch
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_FONT_DIR = PROJECT_ROOT / "fonts"
+SYSTEM_FONT_CANDIDATES = [
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/ukai.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/uming.ttc"),
+    Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+    Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+    Path("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/google-noto-cjk/NotoSerifCJK-Regular.ttc"),
+]
+PROJECT_FONT_PATTERNS = (
+    "*NotoSansSC*.otf",
+    "*NotoSansSC*.ttf",
+    "*NotoSansCJK*.ttc",
+    "*SourceHanSans*.otf",
+    "*SourceHanSans*.ttf",
+    "*wqy*.ttf",
+    "*wqy*.ttc",
+    "*.ttf",
+    "*.ttc",
+    "*.otf",
+)
 
 
 def download_face_model():
@@ -15,33 +43,38 @@ def download_face_model():
     return model_path
 
 
-def load_font():
-    """加载中文字体"""
-    # 设置中文字体
-    font_path = None
-    if os.path.exists("C:/Windows/Fonts/simhei.ttf"):
-        font_path = "C:/Windows/Fonts/simhei.ttf"
-    elif os.path.exists("C:/Windows/Fonts/simsun.ttc"):
-        font_path = "C:/Windows/Fonts/simsun.ttc"
-    elif os.path.exists("C:/Windows/Fonts/msyh.ttc"):
-        font_path = "C:/Windows/Fonts/msyh.ttc"
+def find_chinese_font_path():
+    """查找可用的中文字体文件路径。"""
+    windows_candidates = [
+        Path("C:/Windows/Fonts/simhei.ttf"),
+        Path("C:/Windows/Fonts/simsun.ttc"),
+        Path("C:/Windows/Fonts/msyh.ttc"),
+    ]
+    for candidate in windows_candidates + SYSTEM_FONT_CANDIDATES:
+        if candidate.exists():
+            return str(candidate)
 
-    # 如果找不到系统字体，尝试使用fonts目录下的字体
-    if font_path is None:
-        os.makedirs("fonts", exist_ok=True)
-        font_path = "fonts/font.ttf"
-        if not os.path.exists(font_path):
-            print(f"未找到字体文件: {font_path}")
-            print("将使用默认字体，中文可能显示为乱码")
+    PROJECT_FONT_DIR.mkdir(exist_ok=True)
+    for pattern in PROJECT_FONT_PATTERNS:
+        matches = sorted(PROJECT_FONT_DIR.rglob(pattern))
+        if matches:
+            return str(matches[0])
 
-    # 创建字体对象
+    return None
+
+
+def load_font(size=24):
+    """加载中文字体。"""
+    font_path = find_chinese_font_path()
     try:
-        font_size = 24
-        font = ImageFont.truetype(font_path, font_size)
+        if font_path is None:
+            raise FileNotFoundError("未找到可用的中文字体文件")
+        font = ImageFont.truetype(font_path, size)
         print(f"已加载字体: {font_path}")
         return font
     except Exception as e:
         print(f"加载字体失败: {e}")
+        print("将使用默认字体，中文可能显示为方框或乱码")
         return ImageFont.load_default()
 
 
@@ -523,4 +556,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
